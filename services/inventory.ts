@@ -92,6 +92,30 @@ export const InventoryMethods: { [key: string]: ApiMethodInfo } = {
     isMultipart: false,
     originalName: "RetrieveInventoryCount",
     isWrite: false
+  } as ApiMethodInfo,
+
+  createImage: {
+    description: "Uploads an image file to be represented by a [CatalogImage](entity:CatalogImage) object that can be linked to an inventory item (CatalogItem, CatalogItemVariation, CatalogCategory, or CatalogModifierList).\n\nUse `object_id` to attach the image to an existing inventory item. Leave `object_id` empty to create an unattached image that can be linked later.\n\nAccepts HTTP multipart/form-data with a JSON part and an image file part in JPEG, PJPEG, PNG, or GIF format. Maximum file size is 15MB.",
+    method: "post",
+    path: "/v2/catalog/images",
+    pathParams: [],
+    queryParams: [],
+    requestType: "CreateCatalogImageRequest",
+    isMultipart: true,
+    originalName: "CreateCatalogImage",
+    isWrite: true
+  } as ApiMethodInfo,
+
+  updateImage: {
+    description: "Uploads a new image file to replace the existing one in a [CatalogImage](entity:CatalogImage) object.\n\nThis endpoint accepts HTTP multipart/form-data with a JSON part and an image file part in JPEG, PJPEG, PNG, or GIF format. Maximum file size is 15MB.",
+    method: "put",
+    path: "/v2/catalog/images/{image_id}",
+    pathParams: [{"name":"image_id","type":"string","description":"The ID of the `CatalogImage` object to update the encapsulated image file."}],
+    queryParams: [],
+    requestType: "UpdateCatalogImageRequest",
+    isMultipart: true,
+    originalName: "UpdateCatalogImage",
+    isWrite: true
   } as ApiMethodInfo
 };
 
@@ -242,7 +266,7 @@ export const InventoryHandlers = {
 
   getCount: async (accessToken: string, args: Record<string, unknown>) => {
     const methodInfo = InventoryMethods.getCount;
-    
+
     // Extract path parameters
     const pathParams: Record<string, string> = {};
     methodInfo.pathParams.forEach(param => {
@@ -267,7 +291,7 @@ export const InventoryHandlers = {
 
     // Build URL with path and query parameters
     let url = methodInfo.path;
-    
+
     // Replace path parameters
     Object.entries(pathParams).forEach(([key, value]) => {
       url = url.replace(`{${key}}`, encodeURIComponent(value));
@@ -286,6 +310,149 @@ export const InventoryHandlers = {
       method: methodInfo.method.toUpperCase(),
       headers: getRequestHeaders(accessToken),
       ...(Object.keys(args).length > 0 && ['post', 'put', 'patch'].includes(methodInfo.method.toLowerCase()) && { body: JSON.stringify(args) })
+    });
+    return await handleResponse(response)
+  },
+
+  createImage: async (accessToken: string, args: Record<string, unknown>) => {
+    const methodInfo = InventoryMethods.createImage;
+    const url = methodInfo.path;
+
+    // Handle multipart form data request
+    const formData = new FormData();
+
+    // Get file fields from type map
+    const typeInfo = typeMap[methodInfo.requestType];
+    const mainType = typeInfo.find((t: { name: string; properties: Array<{ name: string; isFile?: boolean }> }) => t.name === methodInfo.requestType);
+    const fileFields = mainType?.properties.filter((p: { isFile?: boolean }) => p.isFile).map((p: { name: string }) => p.name) || [];
+
+    // Add the JSON part, excluding file fields but preserving 'image' metadata
+    const jsonData = { ...args };
+    const imageField = jsonData.image;
+    fileFields.forEach(field => delete jsonData[field]);
+    if (imageField !== undefined) {
+      jsonData.image = imageField;
+    }
+    formData.append('request', JSON.stringify(jsonData), {
+      contentType: 'application/json'
+    });
+
+    // Handle file fields
+    for (const field of fileFields) {
+      const filePath = args[field];
+      if (filePath) {
+        if (typeof filePath !== 'string') {
+          throw new Error(`Expected file path string for field '${field}', got ${typeof filePath}`);
+        }
+        if (!fs.existsSync(filePath)) {
+          throw new Error(`File not found at path: ${filePath}`);
+        }
+        const fileName = path.basename(filePath);
+        const fileExt = path.extname(filePath).toLowerCase();
+        const fileStream = fs.createReadStream(filePath);
+        let contentType = 'application/octet-stream';
+        if (['.jpg', '.jpeg'].includes(fileExt)) {
+          contentType = 'image/jpeg';
+        } else if (fileExt === '.png') {
+          contentType = 'image/png';
+        } else if (fileExt === '.gif') {
+          contentType = 'image/gif';
+        }
+        formData.append('image_file', fileStream, {
+          filename: fileName,
+          contentType
+        });
+      }
+    }
+
+    const boundary = formData.getBoundary();
+    const response = await fetch(`${baseUrl}${url}`, {
+      method: methodInfo.method.toUpperCase(),
+      headers: {
+        ...getRequestHeaders(accessToken),
+        'Content-Type': `multipart/form-data; boundary=${boundary}`
+      },
+      body: formData
+    });
+    return await handleResponse(response)
+  },
+
+  updateImage: async (accessToken: string, args: Record<string, unknown>) => {
+    const methodInfo = InventoryMethods.updateImage;
+
+    // Extract path parameters
+    const pathParams: Record<string, string> = {};
+    methodInfo.pathParams.forEach(param => {
+      const value = args[param.name];
+      if (value !== undefined) {
+        pathParams[param.name] = String(value);
+        delete args[param.name];
+      } else if (param.required) {
+        throw new Error(`Missing required path parameter: ${param.name}`);
+      }
+    });
+
+    // Build URL with path parameters
+    let url = methodInfo.path;
+    Object.entries(pathParams).forEach(([key, value]) => {
+      url = url.replace(`{${key}}`, encodeURIComponent(value));
+    });
+
+    // Handle multipart form data request
+    const formData = new FormData();
+
+    // Get file fields from type map
+    const typeInfo = typeMap[methodInfo.requestType];
+    const mainType = typeInfo.find((t: { name: string; properties: Array<{ name: string; isFile?: boolean }> }) => t.name === methodInfo.requestType);
+    const fileFields = mainType?.properties.filter((p: { isFile?: boolean }) => p.isFile).map((p: { name: string }) => p.name) || [];
+
+    // Add the JSON part, excluding file fields but preserving 'image' metadata
+    const jsonData = { ...args };
+    const imageField = jsonData.image;
+    fileFields.forEach(field => delete jsonData[field]);
+    if (imageField !== undefined) {
+      jsonData.image = imageField;
+    }
+    formData.append('request', JSON.stringify(jsonData), {
+      contentType: 'application/json'
+    });
+
+    // Handle file fields
+    for (const field of fileFields) {
+      const filePath = args[field];
+      if (filePath) {
+        if (typeof filePath !== 'string') {
+          throw new Error(`Expected file path string for field '${field}', got ${typeof filePath}`);
+        }
+        if (!fs.existsSync(filePath)) {
+          throw new Error(`File not found at path: ${filePath}`);
+        }
+        const fileName = path.basename(filePath);
+        const fileExt = path.extname(filePath).toLowerCase();
+        const fileStream = fs.createReadStream(filePath);
+        let contentType = 'application/octet-stream';
+        if (['.jpg', '.jpeg'].includes(fileExt)) {
+          contentType = 'image/jpeg';
+        } else if (fileExt === '.png') {
+          contentType = 'image/png';
+        } else if (fileExt === '.gif') {
+          contentType = 'image/gif';
+        }
+        formData.append('image_file', fileStream, {
+          filename: fileName,
+          contentType
+        });
+      }
+    }
+
+    const boundary = formData.getBoundary();
+    const response = await fetch(`${baseUrl}${url}`, {
+      method: methodInfo.method.toUpperCase(),
+      headers: {
+        ...getRequestHeaders(accessToken),
+        'Content-Type': `multipart/form-data; boundary=${boundary}`
+      },
+      body: formData
     });
     return await handleResponse(response)
   }
